@@ -1,17 +1,19 @@
 package com.openFX.karate;
 
-
-import com.intuit.karate.*;
 import com.openFX.db.DbQueryService;
 import com.openFX.utils.LoggerUtil;
 import org.slf4j.Logger;
 import java.sql.*;
 
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+
 public class DbSelectUsersStep {
     private static final Logger logger = LoggerUtil.getLogger(DbSelectUsersStep.class);
     private static DbQueryService dbQueryService;
 
-    @Karate.BeforeAll
+    @BeforeAll
     public static void setUp() {
         try {
             dbQueryService = new DbQueryService();
@@ -20,20 +22,20 @@ public class DbSelectUsersStep {
         }
     }
 
-    @Karate.Test
+    @Test
     public static ResultSet selectAllUsers() {
         try {
             return dbQueryService.executeQuery("SELECT_ALL_USERS");
         } catch (SQLException e) {
             logger.error("Error selecting users from the database", e);
-            return null;  // Return null if query fails
+            return null; // Return null if query fails
         }
     }
 
-    @Karate.AfterAll
+    @AfterAll
     public static void tearDown() {
         try {
-            DbConnection.closeConnection();
+            dbQueryService.closeConnection();
         } catch (SQLException e) {
             logger.error("Error closing database connection", e);
         }

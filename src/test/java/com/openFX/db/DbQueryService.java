@@ -39,4 +39,8 @@ public class DbQueryService {
             throw e;
         }
     }
+
+    public void closeConnection() throws SQLException {
+        DbConnection.closeConnection();
+    }
 }
