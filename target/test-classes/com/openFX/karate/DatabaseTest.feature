@@ -1,3 +1,4 @@
+"""
 Feature: Move flat file to remote system
 
   Background:
@@ -8,6 +9,7 @@ Feature: Move flat file to remote system
     And def remoteFilePath = '/remote/target/directory/exampleFile.txt'
     When sftp.removeFileIfExists(remoteFilePath)  # Remove existing file if present
     Then sftp.transferFile(localFilePath, remoteFilePath)  # Transfer new file
+"""
 
 Feature: Test Database Operations
 
@@ -16,3 +18,4 @@ Feature: Test Database Operations
 
     # Assert the result (e.g., check that at least one user exists)
     * match result.length() > 0
+

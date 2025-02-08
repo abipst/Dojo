@@ -1,0 +1,24 @@
+-------------------------------------------------------------------------------
+Test set: com.openFX.karate.UserTest
+-------------------------------------------------------------------------------
+Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 1.387 s <<< FAILURE! - in com.openFX.karate.UserTest
+com.openFX.karate.UserTest  Time elapsed: 1.387 s  <<< ERROR!
+java.lang.ExceptionInInitializerError
+	at com.openFX.karate.BaseKarateTest.tearDown(BaseKarateTest.java:18)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)
+	at java.base/java.util.Collections$UnmodifiableCollection.forEach(Collections.java:1117)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)
+Caused by: io.github.cdimascio.dotenv.DotEnvException: Could not find /.env on the classpath
+	at io.github.cdimascio.dotenv.internal.ClasspathHelper.loadFileFromClasspath(ClassPathHelper.kt:37)
+	at io.github.cdimascio.dotenv.internal.DotenvReader.read(DotenvReader.kt:36)
+	at io.github.cdimascio.dotenv.internal.DotenvParser.parse(DotenvParser.kt:26)
+	at io.github.cdimascio.dotenv.DotenvBuilder.load(Dotenv.kt:124)
+	at io.github.cdimascio.dotenv.Dotenv$Instance.load(Dotenv.kt:32)
+	at io.github.cdimascio.dotenv.Dotenv.load(Dotenv.kt)
+	at com.openFX.config.DatabaseConfig.<clinit>(DatabaseConfig.java:14)
+	... 5 more
+	Suppressed: io.github.cdimascio.dotenv.DotEnvException: Could not find ./.env on the file system (working directory: /Users/sathizk7/DojoFX)
+		at io.github.cdimascio.dotenv.internal.DotenvReader.read(DotenvReader.kt:40)
+		... 10 more
+

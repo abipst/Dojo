@@ -31,7 +31,7 @@
     <dependency>
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
-        <version>2.0.0-alpha0</version> <!-- Latest version -->
+        <version>1.7.32</version> <!-- Latest version -->
     </dependency>
     <!-- Logback for SLF4J implementation -->
     <dependency>
@@ -53,6 +53,11 @@
     <groupId>org.apache.sshd</groupId>
     <artifactId>sshd-core</artifactId>
     <version>2.7.0</version>
+</dependency>
+<dependency>
+    <groupId>com.zaxxer</groupId>
+    <artifactId>HikariCP</artifactId>
+    <version>5.0.1</version>
 </dependency>
     </dependencies>
 
