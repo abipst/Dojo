@@ -41,40 +41,73 @@ public class FileDataValidationStep {
         }
     }
 
-    public static List<Map<String, Object>> validateRecordAgainstDb(String accountId) {
-        return dbService.executeQuery("SELECT_ACCOUNT_DATA", accountId);
+    public static List<Map<String, Object>> getDbRecordsByFileName(String fileName) {
+        // Extract date from filename (assuming format: accounts_YYYYMMDD.txt)
+        String dateStr = fileName.replaceAll("accounts_", "").replaceAll(".txt", "");
+        
+        // Query DB for all records for this file date
+        return dbService.executeQuery("SELECT_ACCOUNTS_BY_FILE_DATE", dateStr);
     }
 
-    public static Map<String, Object> compareRecords(Map<String, String> fileRecord, Map<String, Object> dbRecord) {
-        Map<String, Object> comparison = new HashMap<>();
-        List<String> mismatches = new ArrayList<>();
-
-        if (dbRecord == null || dbRecord.isEmpty()) {
-            comparison.put("status", "FAILED");
-            comparison.put("error", "No matching record found in database");
-            return comparison;
+    public static Map<String, Object> validateFile(List<Map<String, String>> fileRecords, List<Map<String, Object>> dbRecords) {
+        Map<String, Object> validationResult = new HashMap<>();
+        List<Map<String, Object>> mismatches = new ArrayList<>();
+        
+        // Create a map of DB records for easier lookup
+        Map<String, Map<String, Object>> dbRecordsMap = new HashMap<>();
+        for (Map<String, Object> dbRecord : dbRecords) {
+            dbRecordsMap.put(String.valueOf(dbRecord.get("ACCOUNT_ID")), dbRecord);
         }
 
-        // Compare each field
-        if (!fileRecord.get("customerName").equals(dbRecord.get("CUSTOMER_NAME"))) {
-            mismatches.add("customerName");
-        }
-        if (!fileRecord.get("transactionDate").equals(dbRecord.get("TRANSACTION_DATE"))) {
-            mismatches.add("transactionDate");
-        }
-        if (!fileRecord.get("amount").trim().equals(String.valueOf(dbRecord.get("AMOUNT")).trim())) {
-            mismatches.add("amount");
-        }
-        if (!fileRecord.get("status").equals(dbRecord.get("STATUS"))) {
-            mismatches.add("status");
+        // Validate each file record
+        for (Map<String, String> fileRecord : fileRecords) {
+            Map<String, Object> dbRecord = dbRecordsMap.get(fileRecord.get("accountId"));
+            
+            if (dbRecord == null) {
+                mismatches.add(createMismatchRecord(fileRecord, null, "Record not found in database"));
+                continue;
+            }
+
+            List<String> fieldMismatches = new ArrayList<>();
+            
+            // Compare fields
+            if (!fileRecord.get("customerName").equals(dbRecord.get("CUSTOMER_NAME"))) {
+                fieldMismatches.add("customerName");
+            }
+            if (!fileRecord.get("transactionDate").equals(dbRecord.get("TRANSACTION_DATE"))) {
+                fieldMismatches.add("transactionDate");
+            }
+            if (!fileRecord.get("amount").trim().equals(String.valueOf(dbRecord.get("AMOUNT")).trim())) {
+                fieldMismatches.add("amount");
+            }
+            if (!fileRecord.get("status").equals(dbRecord.get("STATUS"))) {
+                fieldMismatches.add("status");
+            }
+
+            if (!fieldMismatches.isEmpty()) {
+                Map<String, Object> mismatch = createMismatchRecord(fileRecord, dbRecord, "Field mismatch");
+                mismatch.put("mismatchedFields", fieldMismatches);
+                mismatches.add(mismatch);
+            }
         }
 
-        comparison.put("status", mismatches.isEmpty() ? "PASSED" : "FAILED");
-        comparison.put("mismatches", mismatches);
-        comparison.put("fileRecord", fileRecord);
-        comparison.put("dbRecord", dbRecord);
+        validationResult.put("totalRecords", fileRecords.size());
+        validationResult.put("matchedRecords", fileRecords.size() - mismatches.size());
+        validationResult.put("mismatches", mismatches);
+        validationResult.put("status", mismatches.isEmpty() ? "PASSED" : "FAILED");
 
-        return comparison;
+        return validationResult;
+    }
+
+    private static Map<String, Object> createMismatchRecord(Map<String, String> fileRecord, 
+                                                          Map<String, Object> dbRecord, 
+                                                          String error) {
+        Map<String, Object> mismatch = new HashMap<>();
+        mismatch.put("accountId", fileRecord.get("accountId"));
+        mismatch.put("fileRecord", fileRecord);
+        mismatch.put("dbRecord", dbRecord);
+        mismatch.put("error", error);
+        return mismatch;
     }
 
     public static void closeDbConnection() {
