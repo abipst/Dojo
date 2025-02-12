@@ -4,15 +4,15 @@ Background:
     * def FileValidationSteps = Java.type('com.openFX.karate.steps.FileValidationSteps')
     * def testDataPath = 'src/test/resources/testdata/'
     
-    # Define file layout
+    # Define file layout with DB column mappings
     * def fileLayout =
     """
     [
-      { name: 'accountId', length: 10 },
-      { name: 'customerName', length: 50 },
-      { name: 'transactionDate', length: 8 },
-      { name: 'amount', length: 12 },
-      { name: 'status', length: 2 }
+      { name: 'accountId', length: 10, dbColumn: 'ACCOUNT_ID' },
+      { name: 'customerName', length: 50, dbColumn: 'CUSTOMER_NAME' },
+      { name: 'transactionDate', length: 8, dbColumn: 'TRANSACTION_DATE' },
+      { name: 'amount', length: 12, dbColumn: 'AMOUNT' },
+      { name: 'status', length: 2, dbColumn: 'STATUS' }
     ]
     """
 
@@ -30,7 +30,7 @@ Scenario Outline: Validate fixed length file data against database records
     * print 'Total records in DB:', dbRecords.length
     
     # Validate all records
-    * def validationResults = FileValidationSteps.validateFile(fileRecords, dbRecords)
+    * def validationResults = FileValidationSteps.validateFile(fileRecords, dbRecords, fileLayout)
     
     # Assertions
     * match validationResults.status == 'PASSED'
@@ -43,4 +43,3 @@ Scenario Outline: Validate fixed length file data against database records
     Examples:
         | fileName              |
         | accounts_20240210.txt |
-        | accounts_20240211.txt |

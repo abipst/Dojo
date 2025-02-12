@@ -49,65 +49,93 @@ public class FileDataValidationStep {
         return dbService.executeQuery("SELECT_ACCOUNTS_BY_FILE_DATE", dateStr);
     }
 
-    public static Map<String, Object> validateFile(List<Map<String, String>> fileRecords, List<Map<String, Object>> dbRecords) {
+    public static Map<String, Object> validateFile(List<Map<String, String>> fileRecords, 
+                                                 List<Map<String, Object>> dbRecords, 
+                                                 List<Map<String, Object>> layout) {
         Map<String, Object> validationResult = new HashMap<>();
         List<Map<String, Object>> mismatches = new ArrayList<>();
+
+        // Get field to column mappings from layout
+        Map<String, String> fieldToColumnMap = createFieldToColumnMap(layout);
         
-        // Create a map of DB records for easier lookup
-        Map<String, Map<String, Object>> dbRecordsMap = new HashMap<>();
-        for (Map<String, Object> dbRecord : dbRecords) {
-            dbRecordsMap.put(String.valueOf(dbRecord.get("ACCOUNT_ID")), dbRecord);
-        }
-
-        // Validate each file record
-        for (Map<String, String> fileRecord : fileRecords) {
-            Map<String, Object> dbRecord = dbRecordsMap.get(fileRecord.get("accountId"));
-            
-            if (dbRecord == null) {
-                mismatches.add(createMismatchRecord(fileRecord, null, "Record not found in database"));
-                continue;
-            }
-
+        // Validate records by position
+        int recordsToValidate = Math.min(fileRecords.size(), dbRecords.size());
+        
+        for (int i = 0; i < recordsToValidate; i++) {
+            Map<String, String> fileRecord = fileRecords.get(i);
+            Map<String, Object> dbRecord = dbRecords.get(i);
             List<String> fieldMismatches = new ArrayList<>();
-            
-            // Compare fields
-            if (!fileRecord.get("customerName").equals(dbRecord.get("CUSTOMER_NAME"))) {
-                fieldMismatches.add("customerName");
-            }
-            if (!fileRecord.get("transactionDate").equals(dbRecord.get("TRANSACTION_DATE"))) {
-                fieldMismatches.add("transactionDate");
-            }
-            if (!fileRecord.get("amount").trim().equals(String.valueOf(dbRecord.get("AMOUNT")).trim())) {
-                fieldMismatches.add("amount");
-            }
-            if (!fileRecord.get("status").equals(dbRecord.get("STATUS"))) {
-                fieldMismatches.add("status");
+
+            // Compare each field defined in the layout
+            for (Map.Entry<String, String> mapping : fieldToColumnMap.entrySet()) {
+                String fileField = mapping.getKey();
+                String dbColumn = mapping.getValue();
+                
+                String fileValue = fileRecord.get(fileField);
+                String dbValue = getFormattedDbValue(dbRecord.get(dbColumn));
+                
+                if (!compareValues(fileValue, dbValue)) {
+                    fieldMismatches.add(String.format("%s (File: '%s', DB: '%s')", 
+                        fileField, fileValue, dbValue));
+                }
             }
 
             if (!fieldMismatches.isEmpty()) {
-                Map<String, Object> mismatch = createMismatchRecord(fileRecord, dbRecord, "Field mismatch");
+                Map<String, Object> mismatch = new HashMap<>();
+                mismatch.put("recordNumber", i + 1);
+                mismatch.put("fileRecord", fileRecord);
+                mismatch.put("dbRecord", dbRecord);
                 mismatch.put("mismatchedFields", fieldMismatches);
                 mismatches.add(mismatch);
             }
         }
 
-        validationResult.put("totalRecords", fileRecords.size());
-        validationResult.put("matchedRecords", fileRecords.size() - mismatches.size());
+        // Check for count mismatch
+        if (fileRecords.size() != dbRecords.size()) {
+            logger.warn("Record count mismatch - File: {}, DB: {}", 
+                fileRecords.size(), dbRecords.size());
+        }
+
+        // Prepare validation result
+        validationResult.put("totalFileRecords", fileRecords.size());
+        validationResult.put("totalDbRecords", dbRecords.size());
+        validationResult.put("recordsCompared", recordsToValidate);
+        validationResult.put("matchedRecords", recordsToValidate - mismatches.size());
         validationResult.put("mismatches", mismatches);
-        validationResult.put("status", mismatches.isEmpty() ? "PASSED" : "FAILED");
+        validationResult.put("status", mismatches.isEmpty() && 
+            fileRecords.size() == dbRecords.size() ? "PASSED" : "FAILED");
 
         return validationResult;
     }
 
-    private static Map<String, Object> createMismatchRecord(Map<String, String> fileRecord, 
-                                                          Map<String, Object> dbRecord, 
-                                                          String error) {
-        Map<String, Object> mismatch = new HashMap<>();
-        mismatch.put("accountId", fileRecord.get("accountId"));
-        mismatch.put("fileRecord", fileRecord);
-        mismatch.put("dbRecord", dbRecord);
-        mismatch.put("error", error);
-        return mismatch;
+    private static Map<String, String> createFieldToColumnMap(List<Map<String, Object>> layout) {
+        Map<String, String> fieldToColumnMap = new HashMap<>();
+        for (Map<String, Object> field : layout) {
+            String fieldName = (String) field.get("name");
+            String dbColumn = (String) field.get("dbColumn"); // Add dbColumn to your layout definition
+            fieldToColumnMap.put(fieldName, dbColumn);
+        }
+        return fieldToColumnMap;
+    }
+
+    private static String getFormattedDbValue(Object dbValue) {
+        if (dbValue == null) {
+            return "";
+        }
+        return dbValue.toString().trim();
+    }
+
+    private static boolean compareValues(String fileValue, String dbValue) {
+        // Handle null values
+        if (fileValue == null && dbValue == null) {
+            return true;
+        }
+        if (fileValue == null || dbValue == null) {
+            return false;
+        }
+        
+        // Compare trimmed values
+        return fileValue.trim().equals(dbValue.trim());
     }
 
     public static void closeDbConnection() {
