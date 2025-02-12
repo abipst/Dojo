@@ -14,5 +14,6 @@ function fn() {
   } else if (env == 'e2e') {
     // customize
   }
+  karate.configure('retry', karate.read('classpath:retry.js'));
   return config;
 }
