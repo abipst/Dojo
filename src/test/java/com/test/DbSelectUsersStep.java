@@ -1,4 +1,4 @@
-package com.karate;
+package com.test;
 
 import com.db.DbQueryService;
 import com.utils.LoggerUtil;

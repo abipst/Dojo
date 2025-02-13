@@ -1,4 +1,4 @@
-package com.karate;
+package com.test;
 
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;

@@ -1,4 +1,4 @@
-package com.karate;
+package com.test;
 
 import java.nio.file.Paths;
 import java.time.LocalDateTime;

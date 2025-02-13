@@ -1,4 +1,4 @@
-package com.karate;
+package com.test;
 
 import com.config.DatabaseConfig;
 import com.intuit.karate.junit5.Karate;
