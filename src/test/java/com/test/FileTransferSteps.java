@@ -20,7 +20,7 @@ import com.transfer.SecureFileTransfer;
 
 public class FileTransferSteps {
     private static final Logger logger = LoggerFactory.getLogger(FileTransferSteps.class);
-    
+
     private static FileTransferService createFileTransfer() {
         SftpConfig config = SftpEnvironmentConfig.loadConfig();
         SecureFileTransfer fileTransfer = new SecureFileTransfer(config);
@@ -31,9 +31,8 @@ public class FileTransferSteps {
         logger.info("Checking if file exists in database: {}", fileName);
         try (DbService dbService = new DbServiceImpl()) {
             List<Map<String, Object>> result = dbService.executeQuery(
-                "SELECT_FILE_BY_NAME",
-                fileName
-            );
+                    "SELECT_FILE_BY_NAME",
+                    fileName);
             return !result.isEmpty();
         } catch (Exception e) {
             logger.error("Error checking file existence: {}", fileName, e);
@@ -45,9 +44,8 @@ public class FileTransferSteps {
         logger.info("Deleting file record from database: {}", fileName);
         try (DbService dbService = new DbServiceImpl()) {
             int result = dbService.executeUpdate(
-                "DELETE_FILE_RECORD",
-                fileName
-            );
+                    "DELETE_FILE_RECORD",
+                    fileName);
             if (result == 0) {
                 logger.warn("No file record found to delete for: {}", fileName);
             }
@@ -59,7 +57,7 @@ public class FileTransferSteps {
 
     public static Map<String, Object> transferFileToSecureSystem(String filePath) {
         Map<String, Object> result = new HashMap<>();
-        
+
         try (FileTransferService fileTransfer = createFileTransfer()) {
             Path path = Paths.get(filePath);
             if (!path.toFile().exists()) {
@@ -68,18 +66,17 @@ public class FileTransferSteps {
 
             // Transfer file to remote directory
             boolean transferred = fileTransfer.uploadFile(path, "incoming");
-            
+
             if (transferred) {
                 // Record successful transfer in database
                 try (DbService dbService = new DbServiceImpl()) {
                     dbService.executeUpdate(
-                        "INSERT_FILE_RECORD",
-                        path.getFileName().toString(),
-                        "TRANSFERRED",
-                        LocalDateTime.now().toString()
-                    );
+                            "INSERT_FILE_RECORD",
+                            path.getFileName().toString(),
+                            "TRANSFERRED",
+                            LocalDateTime.now().toString());
                 }
-                
+
                 result.put("success", true);
                 result.put("message", "File transferred successfully");
             } else {
@@ -91,7 +88,19 @@ public class FileTransferSteps {
             result.put("success", false);
             result.put("message", "Error: " + e.getMessage());
         }
-        
+
         return result;
+    }
+
+    public static boolean cleanupTransferredFiles(String fileName) {
+        logger.info("Cleaning up transferred files");
+        try (FileTransferService fileTransfer = createFileTransfer()) {
+            // Delete from secure system
+            return fileTransfer.deleteFile(fileName);
+
+        } catch (Exception e) {
+            logger.error("Error during cleanup", e);
+            throw new RuntimeException("Failed to cleanup transferred files", e);
+        }
     }
 }

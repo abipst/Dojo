@@ -28,4 +28,5 @@ Feature: openFX File Transfer
 
   @file-transfer @cleanup
   Scenario: Cleanup transferred files
-    * def FileTransferSteps.cleanupTransferredFiles()
+    * def fileDeleted = FileTransferSteps.cleanupTransferredFiles('<fileName>')
+    * match fileDeleted == true
