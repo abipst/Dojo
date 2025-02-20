@@ -3,6 +3,7 @@ Feature: Fixed Length File Data Validation
   Background:
     * def FileValidationSteps = Java.type('com.openFX.karate.steps.FileValidationSteps')
     * def testDataPath = 'src/test/resources/testdata/'
+    * def ZephyrSteps = call read('zephyrStep.feature')
     # Define file layout with DB column mappings
     * def fileLayout =
       """
@@ -14,6 +15,9 @@ Feature: Fixed Length File Data Validation
         { name: 'status', length: 2, dbColumn: 'STATUS' }
       ]
       """
+
+   * def testCaseId = ZephyrSteps.testCaseId
+    * def executionId = ZephyrSteps.executionId
 
   @file-validation
   Scenario Outline: Validate fixed length file data against database records
@@ -43,6 +47,12 @@ Feature: Fixed Length File Data Validation
     * fail 'Validation failed with ' + validationResults.mismatches.length + ' mismatches'
     # If there are mismatches, log them for review
     * if (validationResults.status == 'FAILED') karate.log('Validation failures:', validationResults.mismatches)
+
+    # Determine Zephyr test status
+    * def testStatus = validationResults.status == 'PASSED' ? 1 : 2
+
+    # Update Zephyr test execution result
+    * call read('zephyr-steps.feature@Update Test Result in Zephyr') { executionId: '#(executionId)', statusId: '#(testStatus)' }
 
     Examples:
       | fileName              |
