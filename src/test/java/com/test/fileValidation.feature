@@ -52,7 +52,7 @@ Feature: Fixed Length File Data Validation
     * def testStatus = validationResults.status == 'PASSED' ? 1 : 2
 
     # Update Zephyr test execution result
-    * call read('zephyr-steps.feature@Update Test Result in Zephyr') { executionId: '#(executionId)', statusId: '#(testStatus)' }
+    * call read('zephyrStep.feature@Update Test Result in Zephyr') { executionId: '#(executionId)', statusId: '#(testStatus)' }
 
     Examples:
       | fileName              |
