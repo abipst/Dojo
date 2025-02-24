@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 public class FileDataValidationStep {
     private static final Logger logger = LoggerFactory.getLogger(FileDataValidationStep.class);
     private static final DbService dbService = new DbServiceImpl();
+    private static final String DELIMITER = ",";
 
     public static List<Map<String, String>> parseFixedLengthFile(String filePath, List<Map<String, Object>> layout) {
         try {
@@ -44,6 +45,73 @@ public class FileDataValidationStep {
             logger.error("Error parsing fixed length file: {}", filePath, e);
             throw new RuntimeException("Failed to parse fixed length file", e);
         }
+    }
+
+    public static List<Map<String, String>> parseCSVFile(String filePath, List<Map<String, Object>> cLayout,
+            List<Map<String, Object>> dLayout) {
+        try {
+            List<String> lines = FileUtils.readLines(new File(filePath), "UTF-8");
+            List<Map<String, String>> records = new ArrayList<>();
+
+            for (String line : lines) {
+                // Skip empty lines
+                if (line.trim().isEmpty()) {
+                    continue;
+                }
+
+                String[] fields = line.split(DELIMITER, -1); // -1 to keep empty fields
+                if (fields.length == 0) {
+                    continue;
+                }
+
+                // Get the record qualifier (first field)
+                String qualifier = fields[0].trim();
+
+                // Choose layout based on qualifier
+                List<Map<String, Object>> currentLayout = switch (qualifier) {
+                    case "C" -> cLayout;
+                    case "D" -> dLayout;
+                    default -> {
+                        logger.warn("Unknown record qualifier: {}", qualifier);
+                        yield null;
+                    }
+                };
+
+                if (currentLayout == null) {
+                    continue;
+                }
+
+                Map<String, String> record = parseRecord(fields, currentLayout);
+                records.add(record);
+            }
+            return records;
+        } catch (Exception e) {
+            logger.error("Error parsing CSV file: {}", filePath, e);
+            throw new RuntimeException("Failed to parse CSV file", e);
+        }
+    }
+
+    private static Map<String, String> parseRecord(String[] fields, List<Map<String, Object>> layout) {
+        Map<String, String> record = new HashMap<>();
+        // Add the record type to the map
+        record.put("recordType", fields[0].trim());
+
+        // Parse remaining fields according to layout
+        for (int i = 0; i < layout.size() && (i + 1) < fields.length; i++) {
+            Map<String, Object> fieldDef = layout.get(i);
+            String fieldName = (String) fieldDef.get("name");
+            String value = fields[i + 1].trim(); // +1 because first field is qualifier
+
+            // Validate field length if specified
+            Integer maxLength = (Integer) fieldDef.get("length");
+            if (maxLength != null && value.length() > maxLength) {
+                logger.warn("Field {} exceeds maximum length of {}. Truncating.", fieldName, maxLength);
+                value = value.substring(0, maxLength);
+            }
+
+            record.put(fieldName, value);
+        }
+        return record;
     }
 
     public static List<Map<String, Object>> getDbRecordsByFileName(String fileName) {
