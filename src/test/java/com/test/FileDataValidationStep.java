@@ -52,16 +52,16 @@ public class FileDataValidationStep {
         }
     }
 
-    public static List<Map<String, String>> parseCSVFile(String filePath, 
-                                                        List<Map<String, Object>> cLayout,
-                                                        List<Map<String, Object>> dLayout) {
+    public static List<Map<String, String>> parseCSVFile(String filePath,
+            List<Map<String, Object>> cLayout,
+            List<Map<String, Object>> dLayout) {
         List<Map<String, String>> records = new ArrayList<>();
         List<String> allLines = new ArrayList<>();
 
         // First read all lines from the file
         try (BufferedReader reader = new BufferedReader(
                 new FileReader(new File(filePath), StandardCharsets.UTF_8))) {
-            
+
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
@@ -104,7 +104,7 @@ public class FileDataValidationStep {
 
     private static Map<String, String> parseRecord(String[] fields, List<Map<String, Object>> layout) {
         Map<String, String> record = new HashMap<>();
-        
+
         // Add the record type to the map
         record.put("recordType", fields[0].trim());
 
@@ -113,14 +113,14 @@ public class FileDataValidationStep {
             Map<String, Object> fieldDef = layout.get(i);
             String fieldName = (String) fieldDef.get("name");
             String value = fields[i + 1].trim();
-            
+
             // Validate field length if specified
             Integer maxLength = (Integer) fieldDef.get("length");
             if (maxLength != null && value.length() > maxLength) {
                 logger.warn("Field {} exceeds maximum length of {}. Truncating.", fieldName, maxLength);
                 value = value.substring(0, maxLength);
             }
-            
+
             record.put(fieldName, value);
         }
 
@@ -262,6 +262,172 @@ public class FileDataValidationStep {
                 typedFileRecords.size() == typedDbRecords.size() ? "PASSED" : "FAILED");
 
         return validationResult;
+    }
+
+    public static Map<String, Object> validateFileRecordData(Object fileRecords,
+            Object dbRecords,
+            Object layout) {
+        Map<String, Object> validationResult = new HashMap<>();
+        List<Map<String, Object>> mismatches = new ArrayList<>();
+        final double THRESHOLD = 0.20; // 20% threshold
+
+        // Type validation
+        if (!(fileRecords instanceof List<?>) ||
+                !(dbRecords instanceof List<?>) ||
+                !(layout instanceof List<?>)) {
+            throw new IllegalArgumentException("Inputs must be List instances");
+        }
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> typedFileRecords = (List<Map<String, String>>) fileRecords;
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> typedDbRecords = (List<Map<String, Object>>) dbRecords;
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> typedLayout = (List<Map<String, Object>>) layout;
+
+        // Get field to column mappings from layout
+        Map<String, String> fieldToColumnMap = createFieldToColumnMap(typedLayout);
+
+        // Track records validated and matched
+        int recordsValidated = 0;
+        int recordsMatched = 0;
+        Set<Integer> processedFileIndices = new HashSet<>();
+        Set<Integer> processedDbIndices = new HashSet<>();
+
+        // First, try to match records by a key field (assuming accountId is the key)
+        String keyField = "accountId"; // This should be configurable or determined from layout
+        String keyDbColumn = fieldToColumnMap.get(keyField);
+
+        // Build lookup maps for faster matching
+        Map<String, Integer> fileKeyToIndexMap = buildKeyToIndexMap(typedFileRecords, keyField);
+        Map<String, Integer> dbKeyToIndexMap = buildKeyToIndexMap(typedDbRecords, keyDbColumn);
+
+        // Process matches based on key field first
+        for (Map.Entry<String, Integer> entry : fileKeyToIndexMap.entrySet()) {
+            String key = entry.getKey();
+            if (dbKeyToIndexMap.containsKey(key)) {
+                int fileIndex = entry.getValue();
+                int dbIndex = dbKeyToIndexMap.get(key);
+
+                // Skip if already processed
+                if (processedFileIndices.contains(fileIndex) || processedDbIndices.contains(dbIndex)) {
+                    continue;
+                }
+
+                Map<String, String> fileRecord = typedFileRecords.get(fileIndex);
+                Map<String, Object> dbRecord = typedDbRecords.get(dbIndex);
+                List<String> fieldMismatches = new ArrayList<>();
+
+                // Compare each field defined in the layout
+                for (Map.Entry<String, String> mapping : fieldToColumnMap.entrySet()) {
+                    String fileField = mapping.getKey();
+                    String dbColumn = mapping.getValue();
+
+                    String fileValue = fileRecord.get(fileField);
+                    String dbValue = getFormattedDbValue(dbRecord.get(dbColumn));
+
+                    if (!compareValues(fileValue, dbValue)) {
+                        fieldMismatches.add(String.format("%s (File: '%s', DB: '%s')",
+                                fileField, fileValue, dbValue));
+                    }
+                }
+
+                // Mark records as processed
+                processedFileIndices.add(fileIndex);
+                processedDbIndices.add(dbIndex);
+                recordsValidated++;
+
+                if (fieldMismatches.isEmpty()) {
+                    recordsMatched++;
+                } else {
+                    Map<String, Object> mismatch = new HashMap<>();
+                    mismatch.put("recordIndex", fileIndex);
+                    mismatch.put("fileKey", key);
+                    mismatch.put("fileRecord", fileRecord);
+                    mismatch.put("dbRecord", dbRecord);
+                    mismatch.put("mismatchedFields", fieldMismatches);
+                    mismatch.put("error", "Field value mismatch");
+                    mismatches.add(mismatch);
+                }
+            }
+        }
+
+        // Identify records in file but not in DB
+        for (int i = 0; i < typedFileRecords.size(); i++) {
+            if (!processedFileIndices.contains(i)) {
+                Map<String, String> fileRecord = typedFileRecords.get(i);
+                Map<String, Object> mismatch = new HashMap<>();
+                mismatch.put("recordIndex", i);
+                mismatch.put("fileRecord", fileRecord);
+                mismatch.put("dbRecord", null);
+                mismatch.put("error", "Record exists in file but not in DB");
+                mismatches.add(mismatch);
+            }
+        }
+
+        // Calculate error percentage based on threshold logic
+        double errorRate = typedFileRecords.isEmpty() ? 0
+                : (double) (typedFileRecords.size() - recordsMatched) / typedFileRecords.size();
+
+        boolean isWithinThreshold = errorRate <= THRESHOLD;
+
+        // Record count validation - accounting for threshold
+        boolean recordCountOk;
+        String recordCountMessage;
+
+        if (typedFileRecords.size() > typedDbRecords.size()) {
+            int missingRecords = typedFileRecords.size() - typedDbRecords.size();
+            double missingRate = (double) missingRecords / typedFileRecords.size();
+            recordCountOk = missingRate <= THRESHOLD;
+            recordCountMessage = String.format("File has %d more records than DB (%.2f%% missing, threshold: %.2f%%)",
+                    missingRecords, missingRate * 100, THRESHOLD * 100);
+        } else if (typedFileRecords.size() < typedDbRecords.size()) {
+            recordCountOk = false; // This should not happen in normal processing
+            recordCountMessage = String.format("DB has %d more records than file - this requires investigation",
+                    typedDbRecords.size() - typedFileRecords.size());
+        } else {
+            recordCountOk = true;
+            recordCountMessage = "File and DB record counts match exactly";
+        }
+
+        // Prepare validation result
+        validationResult.put("totalFileRecords", typedFileRecords.size());
+        validationResult.put("totalDbRecords", typedDbRecords.size());
+        validationResult.put("recordsValidated", recordsValidated);
+        validationResult.put("recordsMatched", recordsMatched);
+        validationResult.put("errorRate", String.format("%.2f%%", errorRate * 100));
+        validationResult.put("threshold", String.format("%.2f%%", THRESHOLD * 100));
+        validationResult.put("isWithinThreshold", isWithinThreshold);
+        validationResult.put("recordCountValidation", recordCountMessage);
+        validationResult.put("mismatches", mismatches);
+
+        // Final validation status
+        validationResult.put("status", isWithinThreshold && recordCountOk ? "PASSED" : "FAILED");
+
+        return validationResult;
+    }
+
+    /**
+     * Builds a map of key values to record indices for faster lookups
+     */
+    private static Map<String, Integer> buildKeyToIndexMap(List<?> records, String keyField) {
+        Map<String, Integer> keyMap = new HashMap<>();
+        for (int i = 0; i < records.size(); i++) {
+            Object record = records.get(i);
+            String keyValue = null;
+
+            if (record instanceof Map<?, ?>) {
+                Map<?, ?> recordMap = (Map<?, ?>) record;
+                Object key = recordMap.get(keyField);
+                if (key != null) {
+                    keyValue = key.toString().trim();
+                }
+            }
+
+            if (keyValue != null && !keyValue.isEmpty()) {
+                keyMap.put(keyValue, i);
+            }
+        }
+        return keyMap;
     }
 
     private static Map<String, String> createFieldToColumnMap(List<Map<String, Object>> layout) {
