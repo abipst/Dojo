@@ -11,25 +11,22 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 
-import com.config.SftpConfig;
-import com.config.SftpEnvironmentConfig;
 import com.db.DbService;
-import com.db.DbServiceImpl;
 import com.transfer.FileTransferService;
-import com.transfer.SecureFileTransfer;
 
-public class FileTransferSteps {
+public class FileTransferSteps extends BaseKarateTest {
     private static final Logger logger = LoggerFactory.getLogger(FileTransferSteps.class);
 
-    private static FileTransferService createFileTransfer() {
-        SftpConfig config = SftpEnvironmentConfig.loadConfig();
-        SecureFileTransfer fileTransfer = new SecureFileTransfer(config);
-        return fileTransfer;
-    }
+    // No need for @BeforeEach and @AfterEach here since BaseKarateTest handles it
+    // Instance services for this class
+    private DbService dbService;
+    private FileTransferService fileTransferService;
 
-    public static boolean checkFileExistsInDatabase(String fileName) {
+    // You can directly access the dbService and fileTransferService initialized in BaseKarateTest
+    
+    public boolean checkFileExistsInDatabase(String fileName) {
         logger.info("Checking if file exists in database: {}", fileName);
-        try (DbService dbService = new DbServiceImpl()) {
+        try {
             List<Map<String, Object>> result = dbService.executeQuery(
                     "SELECT_FILE_BY_NAME",
                     fileName);
@@ -40,9 +37,9 @@ public class FileTransferSteps {
         }
     }
 
-    public static void deleteFileRecord(String fileName) {
+    public void deleteFileRecord(String fileName) {
         logger.info("Deleting file record from database: {}", fileName);
-        try (DbService dbService = new DbServiceImpl()) {
+        try {
             int result = dbService.executeUpdate(
                     "DELETE_FILE_RECORD",
                     fileName);
@@ -55,27 +52,25 @@ public class FileTransferSteps {
         }
     }
 
-    public static Map<String, Object> transferFileToSecureSystem(String filePath) {
+    public Map<String, Object> transferFileToSecureSystem(String filePath) {
         Map<String, Object> result = new HashMap<>();
 
-        try (FileTransferService fileTransfer = createFileTransfer()) {
+        try {
             Path path = Paths.get(filePath);
             if (!path.toFile().exists()) {
                 throw new IllegalArgumentException("File not found: " + filePath);
             }
 
-            // Transfer file to remote directory
-            boolean transferred = fileTransfer.uploadFile(path, "incoming");
+            // Transfer file to remote directory using the shared connection
+            boolean transferred = fileTransferService.uploadFile(path, "incoming");
 
             if (transferred) {
                 // Record successful transfer in database
-                try (DbService dbService = new DbServiceImpl()) {
-                    dbService.executeUpdate(
-                            "INSERT_FILE_RECORD",
-                            path.getFileName().toString(),
-                            "TRANSFERRED",
-                            LocalDateTime.now().toString());
-                }
+                dbService.executeUpdate(
+                        "INSERT_FILE_RECORD",
+                        path.getFileName().toString(),
+                        "TRANSFERRED",
+                        LocalDateTime.now().toString());
 
                 result.put("success", true);
                 result.put("message", "File transferred successfully");
@@ -92,12 +87,11 @@ public class FileTransferSteps {
         return result;
     }
 
-    public static boolean cleanupTransferredFiles(String fileName) {
+    public boolean cleanupTransferredFiles(String fileName) {
         logger.info("Cleaning up transferred files");
-        try (FileTransferService fileTransfer = createFileTransfer()) {
-            // Delete from secure system
-            return fileTransfer.deleteFile(fileName);
-
+        try {
+            // Delete from secure system using the shared connection
+            return fileTransferService.deleteFile(fileName);
         } catch (Exception e) {
             logger.error("Error during cleanup", e);
             throw new RuntimeException("Failed to cleanup transferred files", e);
