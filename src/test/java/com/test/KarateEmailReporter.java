@@ -111,112 +111,219 @@ class KarateReportGenerator {
     /**
      * Parses Karate summary JSON and extracts relevant test data.
      */
-    public ReportData parseKarateSummary(String summaryJsonPath) throws ReportGenerationException {
-        try {
-            logger.info("Parsing Karate summary from {}", summaryJsonPath);
-            
-            JSONParser parser = new JSONParser(JSONParser.MODE_JSON_SIMPLE);
-            JSONObject summary;
-            
-            try (var reader = new FileReader(summaryJsonPath)) {
-                summary = (JSONObject) parser.parse(reader);
-            }
-            
-            // Extract feature data
-            JSONArray featureResults = (JSONArray) summary.get("featureSummary");
-            
-            var featureStats = StreamSupport.stream(featureResults.spliterator(), false)
-                .map(feature -> (JSONObject) feature)
-                .map(feature -> {
-                    // Extract scenario details and errors
-                    List<ScenarioData> scenarios = new ArrayList<>();
+   /**
+ * Parses Karate summary JSON and extracts relevant test data.
+ * Enhanced to support Karate 1.4.1 with detailed error extraction from feature files.
+ */
+public ReportData parseKarateSummary(String summaryJsonPath) throws ReportGenerationException {
+    try {
+        logger.info("Parsing Karate summary from {}", summaryJsonPath);
+        
+        JSONParser parser = new JSONParser(JSONParser.MODE_JSON_SIMPLE);
+        JSONObject summary;
+        
+        try (var reader = new FileReader(summaryJsonPath)) {
+            summary = (JSONObject) parser.parse(reader);
+        }
+        
+        // Get the directory containing the summary file for accessing feature files
+        Path summaryPath = Paths.get(summaryJsonPath);
+        Path reportDir = summaryPath.getParent();
+        
+        // Extract feature data
+        JSONArray featureResults = (JSONArray) summary.get("featureSummary");
+        
+        var featureStats = StreamSupport.stream(featureResults.spliterator(), false)
+            .map(feature -> (JSONObject) feature)
+            .map(feature -> {
+                // Extract feature details
+                String featureName = (String) feature.getOrDefault("name", "Unknown");
+                boolean failed = (boolean) feature.getOrDefault("failed", false);
+                String featurePath = (String) feature.getOrDefault("relativePath", "");
+                
+                // Extract detailed feature errors from the feature-specific JSON file
+                List<ScenarioData> scenarios = extractScenariosWithDetailedErrors(reportDir, featurePath, failed);
+                
+                // If no scenarios were found in feature files, fall back to summary data
+                if (scenarios.isEmpty()) {
                     JSONArray scenariosArray = (JSONArray) feature.getOrDefault("scenarios", new JSONArray());
                     
-                    StreamSupport.stream(scenariosArray.spliterator(), false)
+                    scenarios = StreamSupport.stream(scenariosArray.spliterator(), false)
                         .map(scenario -> (JSONObject) scenario)
-                        .forEach(scenario -> {
+                        .map(scenario -> {
                             String scenarioName = (String) scenario.getOrDefault("name", "Unknown");
-                            boolean failed = (boolean) scenario.getOrDefault("failed", false);
-                            String errorMessage = failed ? extractErrorMessage(scenario) : null;
+                            boolean scenarioFailed = (boolean) scenario.getOrDefault("failed", false);
+                            String errorMessage = scenarioFailed ? extractErrorMessage(scenario) : null;
                             
-                            scenarios.add(new ScenarioData(
+                            return new ScenarioData(
                                 scenarioName,
-                                failed,
+                                scenarioFailed,
                                 errorMessage
-                            ));
-                        });
-                    
-                    return new FeatureData(
-                        (String) feature.getOrDefault("name", "Unknown"),
-                        (boolean) feature.getOrDefault("failed", false),
-                        ((Number) feature.getOrDefault("scenarioCount", 0)).intValue(),
-                        ((Number) feature.getOrDefault("passedCount", 0)).intValue(),
-                        ((Number) feature.getOrDefault("failedCount", 0)).intValue(),
-                        ((Number) feature.getOrDefault("durationMillis", 0)).longValue(),
-                        scenarios
-                    );
+                            );
+                        })
+                        .collect(Collectors.toList());
+                }
+                
+                return new FeatureData(
+                    featureName,
+                    failed,
+                    ((Number) feature.getOrDefault("scenarioCount", 0)).intValue(),
+                    ((Number) feature.getOrDefault("passedCount", 0)).intValue(),
+                    ((Number) feature.getOrDefault("failedCount", 0)).intValue(),
+                    ((Number) feature.getOrDefault("durationMillis", 0)).longValue(),
+                    scenarios
+                );
+            })
+            .collect(Collectors.toList());
+        
+        int passedFeatures = (int) featureStats.stream().filter(f -> !f.failed).count();
+        int failedFeatures = (int) featureStats.stream().filter(f -> f.failed).count();
+        
+        // Extract scenario stats
+        int totalScenarios = ((Number) summary.getOrDefault("scenarioCount", 0)).intValue();
+        int passedScenarios = ((Number) summary.getOrDefault("scenarioPassed", 0)).intValue();
+        int failedScenarios = ((Number) summary.getOrDefault("scenarioFailed", 0)).intValue();
+        
+        long totalDuration = ((Number) summary.getOrDefault("durationMillis", 0)).longValue();
+        
+        return new ReportData(
+            passedFeatures,
+            failedFeatures,
+            passedScenarios,
+            failedScenarios,
+            totalDuration,
+            featureStats
+        );
+        
+    } catch (IOException e) {
+        throw new ReportGenerationException("Failed to read summary file: " + e.getMessage(), e);
+    } catch (ParseException e) {
+        throw new ReportGenerationException("Failed to parse JSON: " + e.getMessage(), e);
+    } catch (Exception e) {
+        throw new ReportGenerationException("Unexpected error while parsing summary: " + e.getMessage(), e);
+    }
+}
+
+/**
+ * Extracts scenarios with detailed error information from feature-specific JSON files.
+ * In Karate 1.4.1, these files contain more detailed error information.
+ */
+private List<ScenarioData> extractScenariosWithDetailedErrors(Path reportDir, String featurePath, boolean featureFailed) {
+    List<ScenarioData> scenarios = new ArrayList<>();
+    
+    try {
+        // Generate the expected feature file name pattern
+        // In 1.4.1, feature files are named like: features.some.package.feature-name.json
+        String featureName = featurePath;
+        // Remove any directory path and file extension
+        if (featureName.contains("/")) {
+            featureName = featureName.substring(featureName.lastIndexOf('/') + 1);
+        }
+        if (featureName.endsWith(".feature")) {
+            featureName = featureName.substring(0, featureName.lastIndexOf('.'));
+        }
+        
+        // Look for feature files that match the pattern
+        try (Stream<Path> paths = Files.list(reportDir)) {
+            List<Path> featureFiles = paths
+                .filter(path -> {
+                    String fileName = path.getFileName().toString();
+                    return fileName.endsWith(".json") && 
+                           fileName.contains(featureName) &&
+                           fileName.startsWith("features.");
                 })
                 .collect(Collectors.toList());
             
-            int passedFeatures = (int) featureStats.stream().filter(f -> !f.failed).count();
-            int failedFeatures = (int) featureStats.stream().filter(f -> f.failed).count();
-            
-            // Extract scenario stats
-            int totalScenarios = ((Number) summary.getOrDefault("scenarioCount", 0)).intValue();
-            int passedScenarios = ((Number) summary.getOrDefault("scenarioPassed", 0)).intValue();
-            int failedScenarios = ((Number) summary.getOrDefault("scenarioFailed", 0)).intValue();
-            
-            long totalDuration = ((Number) summary.getOrDefault("durationMillis", 0)).longValue();
-            
-            return new ReportData(
-                passedFeatures,
-                failedFeatures,
-                passedScenarios,
-                failedScenarios,
-                totalDuration,
-                featureStats
-            );
-            
-        } catch (IOException e) {
-            throw new ReportGenerationException("Failed to read summary file: " + e.getMessage(), e);
-        } catch (ParseException e) {
-            throw new ReportGenerationException("Failed to parse JSON: " + e.getMessage(), e);
-        } catch (Exception e) {
-            throw new ReportGenerationException("Unexpected error while parsing summary: " + e.getMessage(), e);
-        }
-    }
-    
-    /**
-     * Extracts the error message from a failed scenario
-     */
-    private String extractErrorMessage(JSONObject scenario) {
-        try {
-            StringBuilder errorMsg = new StringBuilder();
-            
-            // Try to get error message from error property first
-            if (scenario.containsKey("error")) {
-                return scenario.get("error").toString();
-            }
-            
-            // If no direct error, look in steps
-            JSONArray steps = (JSONArray) scenario.getOrDefault("steps", new JSONArray());
-            for (Object stepObj : steps) {
-                JSONObject step = (JSONObject) stepObj;
-                if ((boolean) step.getOrDefault("failed", false)) {
-                    var result = (JSONObject) step.get("result");
-                    if (result != null && result.containsKey("errorMessage")) {
-                        errorMsg.append(result.get("errorMessage"));
-                        break;
+            if (!featureFiles.isEmpty()) {
+                // Parse the first matching feature file (there should be only one)
+                Path featureFile = featureFiles.get(0);
+                logger.info("Found detailed feature file: {}", featureFile);
+                
+                JSONParser parser = new JSONParser(JSONParser.MODE_JSON_SIMPLE);
+                JSONObject featureJson;
+                
+                try (var reader = new FileReader(featureFile.toFile())) {
+                    featureJson = (JSONObject) parser.parse(reader);
+                }
+                
+                // Extract scenarios
+                JSONArray scenariosArray = (JSONArray) featureJson.getOrDefault("elements", new JSONArray());
+                for (Object scenarioObj : scenariosArray) {
+                    JSONObject scenario = (JSONObject) scenarioObj;
+                    // Check if it's a scenario (not background)
+                    String type = (String) scenario.getOrDefault("type", "");
+                    if (type.equals("scenario")) {
+                        String scenarioName = (String) scenario.getOrDefault("name", "Unknown");
+                        boolean failed = false;
+                        StringBuilder errorMessage = new StringBuilder();
+                        
+                        // Check steps for failures
+                        JSONArray steps = (JSONArray) scenario.getOrDefault("steps", new JSONArray());
+                        for (Object stepObj : steps) {
+                            JSONObject step = (JSONObject) stepObj;
+                            JSONObject result = (JSONObject) step.getOrDefault("result", new JSONObject());
+                            String status = (String) result.getOrDefault("status", "");
+                            
+                            if (status.equals("failed")) {
+                                failed = true;
+                                String keyword = (String) step.getOrDefault("keyword", "");
+                                String name = (String) step.getOrDefault("name", "");
+                                String errorMsg = (String) result.getOrDefault("error_message", "Unknown error");
+                                
+                                errorMessage.append(keyword).append(" ").append(name).append("\n")
+                                           .append("Error: ").append(errorMsg).append("\n\n");
+                            }
+                        }
+                        
+                        scenarios.add(new ScenarioData(
+                            scenarioName,
+                            failed,
+                            failed ? errorMessage.toString() : null
+                        ));
                     }
                 }
             }
-            
-            return errorMsg.length() > 0 ? errorMsg.toString() : "Unknown error";
-        } catch (Exception e) {
-            logger.warn("Failed to extract error message: {}", e.getMessage());
-            return "Error details not available";
         }
+    } catch (Exception e) {
+        logger.warn("Failed to extract detailed errors from feature files: {}", e.getMessage());
+        // Continue with summary data if feature file parsing fails
     }
+    
+    return scenarios;
+}
+
+/**
+ * Extracts the error message from a failed scenario in the summary JSON
+ * Used as a fallback when detailed feature files are not available
+ */
+private String extractErrorMessage(JSONObject scenario) {
+    try {
+        StringBuilder errorMsg = new StringBuilder();
+        
+        // Try to get error message from error property first
+        if (scenario.containsKey("error")) {
+            return scenario.get("error").toString();
+        }
+        
+        // If no direct error, look in steps
+        JSONArray steps = (JSONArray) scenario.getOrDefault("steps", new JSONArray());
+        for (Object stepObj : steps) {
+            JSONObject step = (JSONObject) stepObj;
+            if ((boolean) step.getOrDefault("failed", false)) {
+                var result = (JSONObject) step.get("result");
+                if (result != null && result.containsKey("errorMessage")) {
+                    errorMsg.append(result.get("errorMessage"));
+                    break;
+                }
+            }
+        }
+        
+        return errorMsg.length() > 0 ? errorMsg.toString() : "Unknown error";
+    } catch (Exception e) {
+        logger.warn("Failed to extract error message: {}", e.getMessage());
+        return "Error details not available";
+    }
+}
     
     /**
      * Generates HTML report from the parsed test data.
@@ -459,69 +566,87 @@ class KarateReportGenerator {
         
         // NEW SECTION: Error Details for Failed Scenarios
         boolean hasFailures = data.features().stream()
-            .anyMatch(feature -> feature.failed || feature.scenarios.stream().anyMatch(s -> s.failed));
-            
-        if (hasFailures) {
-            html.append("""
-                  <div class='summary-box errors-section'>
-                    <div class='summary-title'>Error Details</div>
-            """);
-            
-            // Group by features
-            int featureCounter = 0;
-            for (FeatureData feature : data.features()) {
-                // Skip features with no failures
-                if (!feature.failed && feature.scenarios.stream().noneMatch(s -> s.failed)) {
-                    continue;
-                }
-                
-                featureCounter++;
-                String featureId = "feature-" + featureCounter;
-                
-                html.append("""
-                    <div class='feature-error'>
-                        <div class='error-title'>
-                            <button class='toggle-btn' onclick="toggleErrorDetails('%s')">▼</button>
-                            Feature: %s %s
-                        </div>
-                """.formatted(
-                    featureId,
-                    feature.name,
-                    feature.failed ? "<span class='fail'>[FAILED]</span>" : ""
-                ));
-                
-                html.append("""
-                    <div id='%s' class='scenario-list'>
-                """.formatted(featureId));
-                
-                // Add scenario details with errors
-                boolean hasFailedScenarios = false;
-                for (ScenarioData scenario : feature.scenarios) {
-                    if (scenario.failed && scenario.errorMessage != null) {
-                        hasFailedScenarios = true;
-                        String scenarioId = featureId + "-scenario-" + featureCounter;
-                        
-                        html.append("""
-                            <div class='error-title'>
-                                <span class='fail'>Scenario: %s</span>
-                            </div>
-                            <div class='error-message'>%s</div>
-                        """.formatted(
-                            escapeHtml(scenario.name),
-                            escapeHtml(scenario.errorMessage)
-                        ));
-                    }
-                }
-                
-                if (!hasFailedScenarios) {
-                    html.append("<p>Feature failed but no specific scenario errors were found.</p>");
-                }
-                
-                html.append("</div></div>");
-            }
-            
-            html.append("</div>");
+    .anyMatch(feature -> feature.failed || feature.scenarios.stream().anyMatch(s -> s.failed));
+
+if (hasFailures) {
+    html.append("""
+    <div class="error-details-section">
+        <h2>Error Details</h2>
+    """);
+    
+    // Group by features
+    int featureCounter = 0;
+    for (FeatureData feature : data.features()) {
+        // Skip features with no failures
+        if (!feature.failed && feature.scenarios.stream().noneMatch(s -> s.failed)) {
+            continue;
         }
+        
+        featureCounter++;
+        String featureId = "feature-" + featureCounter;
+        
+        html.append("""
+        <div class="feature-error">
+            <div class="feature-header collapsible" onclick="toggleElement('%s')">
+                <span class="toggle-icon">▼</span> Feature: %s %s
+            </div>
+        """.formatted(
+            featureId, 
+            escapeHtml(feature.name), 
+            feature.failed ? "<span class=\"failed-badge\">[FAILED]</span>" : ""
+        ));
+        
+        html.append("""
+            <div id="%s" class="feature-details">
+        """.formatted(featureId));
+        
+        // Add scenario details with errors
+        boolean hasFailedScenarios = false;
+        int scenarioCounter = 0;
+        
+        for (ScenarioData scenario : feature.scenarios) {
+            if (scenario.failed && scenario.errorMessage != null) {
+                hasFailedScenarios = true;
+                scenarioCounter++;
+                String scenarioId = featureId + "-scenario-" + scenarioCounter;
+                
+                // Format the error message with better styling
+                String formattedError = formatErrorMessage(scenario.errorMessage);
+                
+                html.append("""
+                <div class="scenario-error">
+                    <div class="scenario-header">
+                        Scenario: %s
+                    </div>
+                    <div class="error-message">
+                        %s
+                    </div>
+                </div>
+                """.formatted(
+                    escapeHtml(scenario.name),
+                    formattedError
+                ));
+            }
+        }
+        
+        if (!hasFailedScenarios) {
+            html.append("""
+            <div class="no-details-message">
+                Feature failed but no specific scenario errors were found.
+            </div>
+            """);
+        }
+        
+        html.append("""
+            </div>
+        </div>
+        """);
+    }
+    
+    html.append("""
+    </div>
+    """);
+}
         
         html.append("""
             </body>
@@ -545,6 +670,71 @@ class KarateReportGenerator {
                   .replace("'", "&#39;");
     }
     
+    /**
+ * Formats the error message for better HTML display
+ * Handles both the original format and the new detailed format from feature files
+ */
+private String formatErrorMessage(String errorMessage) {
+    if (errorMessage == null) {
+        return "";
+    }
+    
+    // Check if this is a detailed error message from feature files (contains step information)
+    if (errorMessage.contains("Given ") || errorMessage.contains("When ") || 
+        errorMessage.contains("Then ") || errorMessage.contains("And ") || 
+        errorMessage.contains("* ")) {
+        
+        // Split the error message into lines
+        String[] lines = errorMessage.split("\n");
+        StringBuilder formattedError = new StringBuilder();
+        
+        boolean inErrorSection = false;
+        for (String line : lines) {
+            // Highlight step definitions (Given, When, Then, And, *)
+            if (line.trim().startsWith("Given ") || line.trim().startsWith("When ") || 
+                line.trim().startsWith("Then ") || line.trim().startsWith("And ") || 
+                line.trim().startsWith("* ")) {
+                
+                if (inErrorSection) {
+                    formattedError.append("</pre>");
+                    inErrorSection = false;
+                }
+                
+                formattedError.append("<div class=\"step-definition\">")
+                             .append(escapeHtml(line))
+                             .append("</div>");
+            }
+            // Highlight error messages
+            else if (line.trim().startsWith("Error:")) {
+                if (inErrorSection) {
+                    formattedError.append("</pre>");
+                }
+                
+                formattedError.append("<pre class=\"error-details\">");
+                formattedError.append(escapeHtml(line)).append("\n");
+                inErrorSection = true;
+            }
+            // Stack trace and other details
+            else if (inErrorSection) {
+                formattedError.append(escapeHtml(line)).append("\n");
+            }
+            // Other lines
+            else {
+                formattedError.append("<div>").append(escapeHtml(line)).append("</div>");
+            }
+        }
+        
+        if (inErrorSection) {
+            formattedError.append("</pre>");
+        }
+        
+        return formattedError.toString();
+    }
+    
+    // For traditional error messages (not from feature files)
+    return "<pre class=\"error-details\">" + escapeHtml(errorMessage) + "</pre>";
+}
+
     /**
      * Data record for a single scenario
      */
