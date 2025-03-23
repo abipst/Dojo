@@ -127,14 +127,35 @@ class KarateReportGenerator {
             
             var featureStats = StreamSupport.stream(featureResults.spliterator(), false)
                 .map(feature -> (JSONObject) feature)
-                .map(feature -> new FeatureData(
-                    (String) feature.getOrDefault("name", "Unknown"),
-                    (boolean) feature.getOrDefault("failed", false),
-                    ((Number) feature.getOrDefault("scenarioCount", 0)).intValue(),
-                    ((Number) feature.getOrDefault("passedCount", 0)).intValue(),
-                    ((Number) feature.getOrDefault("failedCount", 0)).intValue(),
-                    ((Number) feature.getOrDefault("durationMillis", 0)).longValue()
-                ))
+                .map(feature -> {
+                    // Extract scenario details and errors
+                    List<ScenarioData> scenarios = new ArrayList<>();
+                    JSONArray scenariosArray = (JSONArray) feature.getOrDefault("scenarios", new JSONArray());
+                    
+                    StreamSupport.stream(scenariosArray.spliterator(), false)
+                        .map(scenario -> (JSONObject) scenario)
+                        .forEach(scenario -> {
+                            String scenarioName = (String) scenario.getOrDefault("name", "Unknown");
+                            boolean failed = (boolean) scenario.getOrDefault("failed", false);
+                            String errorMessage = failed ? extractErrorMessage(scenario) : null;
+                            
+                            scenarios.add(new ScenarioData(
+                                scenarioName,
+                                failed,
+                                errorMessage
+                            ));
+                        });
+                    
+                    return new FeatureData(
+                        (String) feature.getOrDefault("name", "Unknown"),
+                        (boolean) feature.getOrDefault("failed", false),
+                        ((Number) feature.getOrDefault("scenarioCount", 0)).intValue(),
+                        ((Number) feature.getOrDefault("passedCount", 0)).intValue(),
+                        ((Number) feature.getOrDefault("failedCount", 0)).intValue(),
+                        ((Number) feature.getOrDefault("durationMillis", 0)).longValue(),
+                        scenarios
+                    );
+                })
                 .collect(Collectors.toList());
             
             int passedFeatures = (int) featureStats.stream().filter(f -> !f.failed).count();
@@ -162,6 +183,38 @@ class KarateReportGenerator {
             throw new ReportGenerationException("Failed to parse JSON: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new ReportGenerationException("Unexpected error while parsing summary: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Extracts the error message from a failed scenario
+     */
+    private String extractErrorMessage(JSONObject scenario) {
+        try {
+            StringBuilder errorMsg = new StringBuilder();
+            
+            // Try to get error message from error property first
+            if (scenario.containsKey("error")) {
+                return scenario.get("error").toString();
+            }
+            
+            // If no direct error, look in steps
+            JSONArray steps = (JSONArray) scenario.getOrDefault("steps", new JSONArray());
+            for (Object stepObj : steps) {
+                JSONObject step = (JSONObject) stepObj;
+                if ((boolean) step.getOrDefault("failed", false)) {
+                    var result = (JSONObject) step.get("result");
+                    if (result != null && result.containsKey("errorMessage")) {
+                        errorMsg.append(result.get("errorMessage"));
+                        break;
+                    }
+                }
+            }
+            
+            return errorMsg.length() > 0 ? errorMsg.toString() : "Unknown error";
+        } catch (Exception e) {
+            logger.warn("Failed to extract error message: {}", e.getMessage());
+            return "Error details not available";
         }
     }
     
@@ -204,7 +257,46 @@ class KarateReportGenerator {
                 th { background-color: #f2f2f2; }
                 tr.failed { background-color: #ffe6e6; }
                 tr.passed { background-color: #e6ffe6; }
+                .errors-section { margin-top: 30px; }
+                .error-title { font-size: 16px; font-weight: bold; margin-top: 15px; }
+                .error-message { 
+                    background-color: #fff0f0; 
+                    padding: 10px; 
+                    border-left: 4px solid #d9534f;
+                    font-family: monospace;
+                    white-space: pre-wrap;
+                    margin-top: 5px;
+                    margin-bottom: 15px;
+                    overflow-x: auto;
+                }
+                .scenario-list { margin-left: 20px; }
+                .feature-error { 
+                    background-color: #f8f9fa;
+                    border: 1px solid #eaecef;
+                    border-radius: 3px;
+                    padding: 15px;
+                    margin-bottom: 20px;
+                }
+                .toggle-btn {
+                    background-color: #f8f9fa;
+                    border: 1px solid #ddd;
+                    padding: 5px 10px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    border-radius: 3px;
+                }
+                .hidden { display: none; }
               </style>
+              <script>
+                function toggleErrorDetails(id) {
+                    var element = document.getElementById(id);
+                    if (element.classList.contains('hidden')) {
+                        element.classList.remove('hidden');
+                    } else {
+                        element.classList.add('hidden');
+                    }
+                }
+              </script>
             </head>
             <body>
               <div class='header'>
@@ -363,12 +455,104 @@ class KarateReportGenerator {
                   </tbody>
                 </table>
               </div>
+            """);
+        
+        // NEW SECTION: Error Details for Failed Scenarios
+        boolean hasFailures = data.features().stream()
+            .anyMatch(feature -> feature.failed || feature.scenarios.stream().anyMatch(s -> s.failed));
+            
+        if (hasFailures) {
+            html.append("""
+                  <div class='summary-box errors-section'>
+                    <div class='summary-title'>Error Details</div>
+            """);
+            
+            // Group by features
+            int featureCounter = 0;
+            for (FeatureData feature : data.features()) {
+                // Skip features with no failures
+                if (!feature.failed && feature.scenarios.stream().noneMatch(s -> s.failed)) {
+                    continue;
+                }
+                
+                featureCounter++;
+                String featureId = "feature-" + featureCounter;
+                
+                html.append("""
+                    <div class='feature-error'>
+                        <div class='error-title'>
+                            <button class='toggle-btn' onclick="toggleErrorDetails('%s')">▼</button>
+                            Feature: %s %s
+                        </div>
+                """.formatted(
+                    featureId,
+                    feature.name,
+                    feature.failed ? "<span class='fail'>[FAILED]</span>" : ""
+                ));
+                
+                html.append("""
+                    <div id='%s' class='scenario-list'>
+                """.formatted(featureId));
+                
+                // Add scenario details with errors
+                boolean hasFailedScenarios = false;
+                for (ScenarioData scenario : feature.scenarios) {
+                    if (scenario.failed && scenario.errorMessage != null) {
+                        hasFailedScenarios = true;
+                        String scenarioId = featureId + "-scenario-" + featureCounter;
+                        
+                        html.append("""
+                            <div class='error-title'>
+                                <span class='fail'>Scenario: %s</span>
+                            </div>
+                            <div class='error-message'>%s</div>
+                        """.formatted(
+                            escapeHtml(scenario.name),
+                            escapeHtml(scenario.errorMessage)
+                        ));
+                    }
+                }
+                
+                if (!hasFailedScenarios) {
+                    html.append("<p>Feature failed but no specific scenario errors were found.</p>");
+                }
+                
+                html.append("</div></div>");
+            }
+            
+            html.append("</div>");
+        }
+        
+        html.append("""
             </body>
             </html>
             """);
         
         return html.toString();
     }
+    
+    /**
+     * Escape HTML special characters
+     */
+    private String escapeHtml(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replace("&", "&amp;")
+                  .replace("<", "&lt;")
+                  .replace(">", "&gt;")
+                  .replace("\"", "&quot;")
+                  .replace("'", "&#39;");
+    }
+    
+    /**
+     * Data record for a single scenario
+     */
+    record ScenarioData(
+        String name,
+        boolean failed,
+        String errorMessage
+    ) {}
     
     /**
      * Data record for a single feature
@@ -379,7 +563,8 @@ class KarateReportGenerator {
         int scenarioCount, 
         int passedCount, 
         int failedCount, 
-        long durationMillis
+        long durationMillis,
+        List<ScenarioData> scenarios
     ) {}
     
     /**
