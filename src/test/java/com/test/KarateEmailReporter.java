@@ -243,7 +243,31 @@ private List<ScenarioData> extractScenariosWithDetailedErrors(Path reportDir, St
                 JSONObject featureJson;
                 
                 try (var reader = new FileReader(featureFile.toFile())) {
-                    featureJson = (JSONObject) parser.parse(reader);
+                    Object parsedJson = parser.parse(reader);
+                    
+                    // Handle both array and object formats
+                    if (parsedJson instanceof JSONArray) {
+                        // If the root is an array, the first element might be our feature
+                        JSONArray jsonArray = (JSONArray) parsedJson;
+                        if (!jsonArray.isEmpty()) {
+                            Object firstElement = jsonArray.get(0);
+                            if (firstElement instanceof JSONObject) {
+                                featureJson = (JSONObject) firstElement;
+                            } else {
+                                logger.warn("Feature file has unexpected format: root array does not contain JSONObject");
+                                return scenarios; // Return empty list
+                            }
+                        } else {
+                            logger.warn("Feature file contains empty array");
+                            return scenarios; // Return empty list
+                        }
+                    } else if (parsedJson instanceof JSONObject) {
+                        // Expected case - root is an object
+                        featureJson = (JSONObject) parsedJson;
+                    } else {
+                        logger.warn("Feature file has unexpected format: root is neither JSONArray nor JSONObject");
+                        return scenarios; // Return empty list
+                    }
                 }
                 
                 // Extract scenarios
