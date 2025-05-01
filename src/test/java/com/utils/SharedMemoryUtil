@@ -1,0 +1,99 @@
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+public class SharedMemoryUtil {
+    // Location of shared memory file - in target directory for Maven compatibility
+    private static final Path SHARED_MEMORY_PATH = Paths.get(
+            System.getProperty("user.dir"), "target", "shared-memory.bin");
+    
+    // Size of memory-mapped region (adjust as needed)
+    private static final int BUFFER_SIZE = 4096;
+    
+    /**
+     * Write a string value to shared memory
+     */
+    public static void writeValue(String key, String value) throws IOException {
+        // Create parent directories if they don't exist
+        Files.createDirectories(SHARED_MEMORY_PATH.getParent());
+        
+        // Open file with read-write access
+        try (RandomAccessFile file = new RandomAccessFile(SHARED_MEMORY_PATH.toFile(), "rw");
+             FileChannel channel = file.getChannel()) {
+            
+            // Map the file into memory
+            ByteBuffer buffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, BUFFER_SIZE);
+            
+            // Clear buffer
+            buffer.clear();
+            
+            // Write key length and bytes
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+            buffer.putInt(keyBytes.length);
+            buffer.put(keyBytes);
+            
+            // Write value length and bytes
+            byte[] valueBytes = value.getBytes(StandardCharsets.UTF_8);
+            buffer.putInt(valueBytes.length);
+            buffer.put(valueBytes);
+            
+            // Force changes to disk
+            buffer.force();
+        }
+    }
+    
+    /**
+     * Read a string value from shared memory
+     */
+    public static String readValue(String key) throws IOException {
+        // Check if file exists
+        if (!Files.exists(SHARED_MEMORY_PATH)) {
+            return null;
+        }
+        
+        // Open file with read access
+        try (RandomAccessFile file = new RandomAccessFile(SHARED_MEMORY_PATH.toFile(), "r");
+             FileChannel channel = file.getChannel()) {
+            
+            // Map the file into memory
+            ByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
+            
+            // Read key length and bytes
+            int keyLength = buffer.getInt();
+            byte[] keyBytes = new byte[keyLength];
+            buffer.get(keyBytes);
+            String storedKey = new String(keyBytes, StandardCharsets.UTF_8);
+            
+            // If keys match, read and return value
+            if (storedKey.equals(key)) {
+                int valueLength = buffer.getInt();
+                byte[] valueBytes = new byte[valueLength];
+                buffer.get(valueBytes);
+                return new String(valueBytes, StandardCharsets.UTF_8);
+            }
+            
+            return null;
+        }
+    }
+    
+    /**
+     * Check if the shared memory file exists
+     */
+    public static boolean exists() {
+        return Files.exists(SHARED_MEMORY_PATH);
+    }
+    
+    /**
+     * Delete the shared memory file
+     */
+    public static void cleanup() throws IOException {
+        if (exists()) {
+            Files.delete(SHARED_MEMORY_PATH);
+        }
+    }
+}

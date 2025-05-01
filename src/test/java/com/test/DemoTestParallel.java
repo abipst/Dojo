@@ -6,7 +6,13 @@ import com.intuit.karate.core.ScenarioResult;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import com.utils.SharedMemoryUtil;
 
 public class DemoTestParallel {
 
@@ -73,6 +79,33 @@ public class DemoTestParallel {
         // Extract test case ID if found
         return matcher.find() ? matcher.group(1) : "UNKNOWN-TC"; 
         // Extract the test case ID from the scenario name...
+    }
+    
+    /**
+     * Save the test case key to shared memory
+     */
+    private void saveTestCaseKey() {
+        try {
+            // Write the test case key to shared memory
+            SharedMemoryUtil.writeValue("TEST_CASE_KEY_NAME", "testCaseKey");
+            System.out.println("TestCaseKey saved to shared memory: " + "testCaseKey");
+        } catch (IOException e) {
+            System.err.println("Failed to save TestCaseKey to shared memory: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+    }
+
+     /**
+     * Get the test case key from shared memory
+     */
+    public static String getTestCaseKey() {
+        try {
+            return SharedMemoryUtil.readValue("TEST_CASE_KEY_NAME");
+        } catch (IOException e) {
+            System.err.println("Failed to read TestCaseKey from shared memory: " + e.getMessage());
+            return null;
+        }
     }
 }
 

@@ -10,6 +10,7 @@ import com.transfer.SecureFileTransfer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.List;
 
 public class TestSetupHelper {
@@ -157,5 +158,19 @@ public class TestSetupHelper {
         DatabaseConfig.closeDataSource();
         
         logger.info("All resources have been released");
+    }
+
+    /**
+     * Save the test case key to shared memory
+     */
+    private void saveTestCaseKey() {
+        try {
+            // Write the test case key to shared memory
+            SharedMemoryUtil.writeValue(TEST_CASE_KEY_NAME, testCaseKey);
+            System.out.println("TestCaseKey saved to shared memory: " + testCaseKey);
+        } catch (IOException e) {
+            System.err.println("Failed to save TestCaseKey to shared memory: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }
