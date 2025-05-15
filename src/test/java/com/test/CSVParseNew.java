@@ -22,6 +22,7 @@ public class CSVParseNew {
 
 		List<String> result = new ArrayList<>();
 		StringBuilder field = new StringBuilder();
+        //
 		boolean inQuotes = false;
 
 		for (int i = 0; i < line.length(); i++) {
